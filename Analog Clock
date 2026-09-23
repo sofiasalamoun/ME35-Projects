@@ -1,0 +1,120 @@
+# Our build tells time and day of week
+# D34 button tells the time when pressed and the 0 NeoPixel will be set to blue (AM just first neopixel blue, PM both neopixel)
+# D35 button tells day of the week when pressed and the 0 NeiPixel will be set to green
+
+
+
+
+#importing the libraries
+import network
+import urequests
+import time
+import neopixel
+from machine import Pin, PWM
+
+#setting up SSID and password
+SSID = "tufts_eecs"
+PASSWORD = "foundedin1883"
+
+#function definition
+def connect_wifi():
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    if not wlan.isconnected():
+        print("Connecting to WiFi...")
+        wlan.connect(SSID, PASSWORD)
+        while not wlan.isconnected():
+            time.sleep(0.5)
+    print("Connected! IP address:", wlan.ifconfig()[0])
+    return wlan
+
+connect_wifi()
+
+# NeoPixel setup and turn all lights off at the beginning
+lights = neopixel.NeoPixel(Pin(15), 2)
+lights[0] = (0,0,0)
+lights[1] = (0, 0, 0)
+lights.write()
+
+# D34 button tells the time when pressed; D35 button tells day of the week when pressed
+btn_time = Pin(34, Pin.IN)
+btn_day  = Pin(35, Pin.IN)
+
+# Servo setup
+servo = PWM(Pin(4), freq=50)
+
+def set_servo_angle(angle):
+    # flip direction since we tend to measure angle CW (the input angle) but the 0 degree of the motor is measured CCW 
+    reversed_angle = 180 - angle  
+    duty = int(26 + (reversed_angle / 180) * 102)
+    servo.duty(duty)
+
+def time_to_angle(time_str):
+    hour = int(time_str.split(":")[0])
+    minute = int(time_str.split(":")[1])
+    # convert to 12hr, # < 12 after % will be #
+    # eg: 2 % 12 = 14 % 12 =2
+    hour = hour % 12
+    if hour == 0:
+        hour = 12
+    # each hour = 15 degrees, add minutes as fraction, 12 increments
+    angle = int(((hour + minute/60) / 12) * 180)
+    return angle
+
+def day_to_angle(day_str):
+    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    print("Looking for:", repr(day_str))  # shows exact string including hidden characters
+    index = days.index(day_str)
+    angle = int((index / 6) * 180)
+    return angle
+
+# URL provided by Claude
+TIME_URL = "http://timeapi.io/api/Time/current/zone?timeZone=America/New_York"
+
+def get_time_data():
+    response = urequests.get(TIME_URL)
+    data = response.json()
+    response.close()
+    return data
+
+def set_blue(hour):
+    if hour >= 12:  # PM - both neopixels blue
+        lights[0] = (0, 0, 255)
+        lights[1] = (0, 0, 255)
+    else:  # AM - just first neopixel blue
+        lights[0] = (0, 0, 255)
+        lights[1] = (0, 0, 0)
+    lights.write()
+
+
+def set_green():
+    lights[0] = (0, 255, 0)
+    lights[1] = (0, 0, 0)  # turn off second light
+    lights.write()
+  
+
+print("Ready! Blue: Time mode and Green: Days Of The Week mode")
+
+while True:
+    if not btn_time.value():
+        print("Getting time...")
+        data = get_time_data()
+        time_str = data['time']  # already "14:55" format, no splitting needed!
+        hour = int(time_str.split(":")[0])
+        print("Time:", time_str)
+        angle = time_to_angle(time_str)
+        print("Servo angle:", angle) # this angle value is measured CW
+        set_servo_angle(angle)
+        set_blue(hour)  # pass hour to determine AM/PM
+
+    if not btn_day.value():
+        print("Getting day...")
+        data = get_time_data()
+        day_val = data['dayOfWeek']
+        print("Day:", day_val)
+        angle = day_to_angle(day_val)
+        print("Servo angle:", angle) #
+        set_servo_angle(angle)
+        set_green()
+
+    time.sleep(0.05)
